@@ -11,8 +11,31 @@ ANY /api/n9e/proxy/:id/*url
 ```
 
 - 支持所有 HTTP 方法（GET / POST / PUT / DELETE 等）。
-- 需要登录。
+- 需要认证（JWT 登录态或 `X-User-Token`，见下文）。
 - `:id` 是数据源 ID，`*url` 是后端原生 API 的路径和查询参数。
+
+### 认证方式
+
+两种方式二选一：
+
+**1. 浏览器登录态（JWT）**
+前端调用时自带登录 Cookie 和 `Authorization: Bearer <access_token>`，正常登录 n9e 后无需额外配置。
+
+**2. X-User-Token（推荐给脚本 / 外部调用）**
+在个人中心生成一个固定 token，然后在请求头里带上：
+
+```
+X-User-Token: <your-token>
+```
+
+在个人中心 → 令牌管理（User Tokens）中创建 / 吊销；token 绑定到具体用户，继承该用户的权限。n9e 管理员需要在配置中开启 `http.token_auth.enable = true`，默认请求头是 `X-User-Token`，可通过 `http.token_auth.header_user_token_key` 改名。
+
+示例：
+
+```bash
+curl -H "X-User-Token: 2f8b...c71e" \
+  "http://n9e/api/n9e/proxy/1/api/v1/query?query=up"
+```
 
 ### 路径参数
 
