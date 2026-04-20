@@ -67,24 +67,24 @@ func New(httpConfig httpx.Config, center cconf.Center, alert aconf.Alert, ibex c
 	sso *sso.SsoClient, ctx *ctx.Context, metaSet *metas.Set, idents *idents.Set,
 	tc *memsto.TargetCacheType, uc *memsto.UserCacheType, ugc *memsto.UserGroupCacheType, utc *memsto.UserTokenCacheType, logDir string) *Router {
 	return &Router{
-		HTTP:                httpConfig,
-		Center:              center,
-		Alert:               alert,
-		Ibex:                ibex,
-		Operations:          operations,
-		DatasourceCache:     ds,
-		NotifyConfigCache:   ncc,
-		PromClients:         pc,
-		Redis:               redis,
-		MetaSet:             metaSet,
-		IdentSet:            idents,
-		TargetCache:         tc,
-		Sso:                 sso,
-		UserCache:           uc,
-		UserGroupCache:      ugc,
-		UserTokenCache:      utc,
-		Ctx:                 ctx,
-		LogDir:              logDir,
+		HTTP:                  httpConfig,
+		Center:                center,
+		Alert:                 alert,
+		Ibex:                  ibex,
+		Operations:            operations,
+		DatasourceCache:       ds,
+		NotifyConfigCache:     ncc,
+		PromClients:           pc,
+		Redis:                 redis,
+		MetaSet:               metaSet,
+		IdentSet:              idents,
+		TargetCache:           tc,
+		Sso:                   sso,
+		UserCache:             uc,
+		UserGroupCache:        ugc,
+		UserTokenCache:        utc,
+		Ctx:                   ctx,
+		LogDir:                logDir,
 		HeartbeatHook:         func(ident string) map[string]interface{} { return nil },
 		TargetDeleteHook:      func(tx *gorm.DB, idents []string, force bool) error { return nil },
 		TargetBgidChangeCheck: func(idents []string, action string, bgids []int64) error { return nil },
@@ -593,6 +593,9 @@ func (rt *Router) Config(r *gin.Engine) {
 		pages.GET("/notify-channel-configs", rt.auth(), rt.user(), rt.perm("/notification-channels"), rt.notifyChannelsGet)
 		pages.GET("/simplified-notify-channel-configs", rt.auth(), rt.user(), rt.notifyChannelsGetForNormalUser)
 		pages.GET("/flashduty-channel-list/:id", rt.auth(), rt.user(), rt.flashDutyNotifyChannelsGet)
+		pages.POST("/feishu-visible-chats/:id", rt.auth(), rt.user(), rt.perm("/notification-channels"), rt.feishuVisibleChatsGet)
+		// TODO(dingtalkapp): 钉钉应用本次不上线，dingtalk-group-list 路由先注释；handler 也已注释。
+		// pages.POST("/dingtalk-group-list/:id", rt.auth(), rt.user(), rt.perm("/notification-channels"), rt.dingtalkGroupsGetByNotifyChannel)
 		pages.GET("/pagerduty-integration-key/:id/:service_id/:integration_id", rt.auth(), rt.user(), rt.pagerDutyIntegrationKeyGet)
 		pages.GET("/pagerduty-service-list/:id", rt.auth(), rt.user(), rt.pagerDutyNotifyServicesGet)
 		pages.GET("/notify-channel-config", rt.auth(), rt.user(), rt.notifyChannelGetBy)
