@@ -250,8 +250,13 @@ func HandleEventPipeline(pipelineConfigs []models.PipelineConfig, eventOrigin, e
 			continue
 		}
 
+		if eventPipeline.Disabled {
+			logger.Infof("processor_by_%s_id:%d pipeline_id:%d, event pipeline is disabled, event: %s", from, id, pipelineConfig.PipelineId, event.Hash)
+			continue
+		}
+
 		if !PipelineApplicable(eventPipeline, event) {
-			logger.Debugf("processor_by_%s_id:%d pipeline_id:%d, event pipeline not applicable, event: %s", from, id, pipelineConfig.PipelineId, event.Hash)
+			logger.Infof("processor_by_%s_id:%d pipeline_id:%d, event pipeline not applicable, event: %s", from, id, pipelineConfig.PipelineId, event.Hash)
 			continue
 		}
 
