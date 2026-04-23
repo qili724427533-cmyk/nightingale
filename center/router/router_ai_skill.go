@@ -75,10 +75,26 @@ func (rt *Router) aiSkillGet(c *gin.Context) {
 		ginx.Bomb(http.StatusNotFound, "ai skill not found")
 	}
 
-	// Include associated files (without content)
-	files, err := models.AISkillFileGets(rt.Ctx, id)
-	ginx.Dangerous(err)
-	obj.Files = files
+	if obj.CreatedBy == "system" {
+		// 内置 skill 不需要看 skill 细节，只能看 readme 文档
+		files, err := models.AISkillFileGets(rt.Ctx, id)
+		ginx.Dangerous(err)
+		for _, file := range files {
+			if strings.EqualFold(file.Name, "readme.md") {
+				filedetail, err := models.AISkillFileGetById(rt.Ctx, file.Id)
+				ginx.Dangerous(err)
+				if filedetail != nil {
+					obj.Instructions = filedetail.Content
+				}
+				break
+			}
+		}
+	} else {
+		// Include associated files (without content)
+		files, err := models.AISkillFileGets(rt.Ctx, id)
+		ginx.Dangerous(err)
+		obj.Files = files
+	}
 
 	ginx.NewRender(c).Data(obj, nil)
 }
