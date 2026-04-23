@@ -176,34 +176,25 @@ func writeOneSkill(skillsPath string, s *DBSkill) error {
 		return fmt.Errorf("mark fromdb: %w", err)
 	}
 
-	// Write SKILL.md with frontmatter. yaml.Marshal produces deterministic
-	// output (alphabetical keys), which keeps the on-disk bytes stable across
-	// syncs — helpful for any downstream file-mtime-based cache.
-	skillMD, err := buildSkillMD(s)
-	if err != nil {
-		return fmt.Errorf("build SKILL.md: %w", err)
-	}
-	if len(skillMD) > MaxSkillMD {
-		return fmt.Errorf("SKILL.md exceeds %dKB limit (%d bytes)", MaxSkillMD/1024, len(skillMD))
-	}
-	if err := writeFileAtomic(filepath.Join(dir, "SKILL.md"), []byte(skillMD)); err != nil {
-		return fmt.Errorf("write SKILL.md: %w", err)
-	}
-
-	// Build the set of relative paths we're about to write, so we can prune
-	// files that used to be there but no longer are.
+	// SKILL.md 是 s.Files 里一条普通记录（上传路径是归档里的原始字节，JSON 创建
+	// 路径是由 BuildSkillMD 合成的字节）。和资源文件一视同仁走同一个循环，循环末端
+	// 校验"必须存在 SKILL.md"这个不变式。
 	incoming := make(map[string]struct{}, len(s.Files))
 	for _, f := range s.Files {
 		rel, err := safeRelPath(f.Name)
 		if err != nil {
 			return fmt.Errorf("file %q: %w", f.Name, err)
 		}
-		if rel == "SKILL.md" || rel == FromDBMarker {
-			// SKILL.md is managed separately; .fromdb is our marker.
-			// Silently ignore (import step could have accidentally picked them up).
+		if rel == FromDBMarker {
+			// .fromdb 由 MarkFromDB 管，跳过
 			continue
 		}
-		if int64(len(f.Content)) > MaxSingleFile {
+
+		if rel == "SKILL.md" {
+			if len(f.Content) > MaxSkillMD {
+				return fmt.Errorf("SKILL.md exceeds %dKB limit (%d bytes)", MaxSkillMD/1024, len(f.Content))
+			}
+		} else if int64(len(f.Content)) > MaxSingleFile {
 			return fmt.Errorf("file %s exceeds %dMB limit (%d bytes)", rel, MaxSingleFile/1024/1024, len(f.Content))
 		}
 
@@ -217,6 +208,12 @@ func writeOneSkill(skillsPath string, s *DBSkill) error {
 		incoming[rel] = struct{}{}
 	}
 
+	// 不变式：DB 里每个 skill 必然有一条 name="SKILL.md" 的 ai_skill_file 记录。
+	// 缺失说明上游写入路径漏了 SKILL.md —— 直接报错暴露。
+	if _, ok := incoming["SKILL.md"]; !ok {
+		return fmt.Errorf("skill %q has no SKILL.md file", s.Name)
+	}
+
 	// Prune stale files inside this skill directory (anything not in incoming,
 	// not SKILL.md, not .fromdb). We intentionally walk after writes so a
 	// mid-sync crash leaves the "extra" file as a no-op rather than a hole.
@@ -227,12 +224,16 @@ func writeOneSkill(skillsPath string, s *DBSkill) error {
 	return nil
 }
 
-// buildSkillMD emits a round-trippable SKILL.md: the frontmatter uses the same
+// BuildSkillMD emits a round-trippable SKILL.md: the frontmatter uses the same
 // keys markdown.Frontmatter parses, and empty fields are dropped so the output
 // is clean rather than `license: ""` noise. We build from a local struct with
 // omitempty tags (rather than mutating the shared Frontmatter type) so the
 // parse-side stays permissive.
-func buildSkillMD(s *DBSkill) (string, error) {
+//
+// Exported for the router-layer JSON-create path, where the caller has DB
+// columns but no original SKILL.md bytes and needs to synthesize one to
+// upsert into the ai_skill_file table.
+func BuildSkillMD(s *DBSkill) (string, error) {
 	fm := struct {
 		Name          string            `yaml:"name"`
 		Description   string            `yaml:"description,omitempty"`

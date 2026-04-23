@@ -8,15 +8,13 @@ import (
 	"strings"
 )
 
-// Walk 走读已解压的 skill 目录，分离出 SKILL.md 和其它文件。
-// 返回：
-//   - skillMD:     根 SKILL.md 的原始内容（没找到则为空字符串）
-//   - files:       relPath → content 的其它文件映射
-//   - err:         走读或读文件出错时返回
+// Walk 走读已解压的 skill 目录，返回 relPath → content 的文件映射。
+// SKILL.md 和其它文件一视同仁放在 map 里，调用方自己从 files["SKILL.md"] 取主文件。
 //
 // 实现会自动 unwrap 单层顶级目录（archive root，见 archiveRoot），
-// 并跳过 .* 和 __MACOSX 等系统噪声条目。
-func Walk(dir string) (skillMD string, files map[string]string, err error) {
+// 并跳过 .* 和 __MACOSX 等系统噪声条目。SKILL.md 单独走 MaxSkillMD 限额，
+// 其它文件走 MaxSingleFile 限额。
+func Walk(dir string) (files map[string]string, err error) {
 	dir = archiveRoot(dir)
 	files = make(map[string]string)
 
@@ -60,13 +58,10 @@ func Walk(dir string) (skillMD string, files map[string]string, err error) {
 			if len(content) > MaxSkillMD {
 				return fmt.Errorf("SKILL.md exceeds %dKB limit (%d bytes)", MaxSkillMD/1024, len(content))
 			}
-			skillMD = string(content)
-		} else {
-			if int64(len(content)) > MaxSingleFile {
-				return fmt.Errorf("file %s exceeds %dMB limit (%d bytes)", relPath, MaxSingleFile/1024/1024, len(content))
-			}
-			files[relPath] = string(content)
+		} else if int64(len(content)) > MaxSingleFile {
+			return fmt.Errorf("file %s exceeds %dMB limit (%d bytes)", relPath, MaxSingleFile/1024/1024, len(content))
 		}
+		files[relPath] = string(content)
 		return nil
 	})
 	return

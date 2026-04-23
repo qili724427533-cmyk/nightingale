@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/ccfos/nightingale/v6/aiagent/skill"
@@ -15,6 +16,50 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+// upsertGeneratedSkillMD 把 AISkill 的字段合成一份 SKILL.md，upsert 进 ai_skill_file 表。
+// 用于 JSON 创建 / JSON 更新路径 —— 调用方没有原始 SKILL.md 字节，必须由列反向生成
+// 以维护"每个 skill 在 ai_skill_file 里必有一条 name=SKILL.md 记录"的不变式。
+func upsertGeneratedSkillMD(c *ctx.Context, s *models.AISkill, username string) error {
+	content, err := skill.BuildSkillMD(&skill.DBSkill{
+		Name:          s.Name,
+		Description:   s.Description,
+		Instructions:  s.Instructions,
+		License:       s.License,
+		Compatibility: s.Compatibility,
+		Metadata:      s.Metadata,
+		AllowedTools:  s.AllowedTools,
+	})
+	if err != nil {
+		return err
+	}
+	return models.AISkillFileBatchUpsert(c, s.Id, []*models.AISkillFile{{
+		Name:      "SKILL.md",
+		Content:   content,
+		CreatedBy: username,
+	}}, false)
+}
+
+// skillContentDiffers 判断内容字段是否变更（enabled / updated_by 等运维字段不计入）。
+// 仅当内容变更时，JSON 更新路径才应重新合成 SKILL.md；否则保留上传时留下的原始字节
+// ——前端切换 enable 开关会把所有字段原样回传，这里必须识别出来避免误覆盖。
+func skillContentDiffers(cur, ref *models.AISkill) bool {
+	return cur.Name != ref.Name ||
+		cur.Description != ref.Description ||
+		cur.Instructions != ref.Instructions ||
+		cur.License != ref.License ||
+		cur.Compatibility != ref.Compatibility ||
+		cur.AllowedTools != ref.AllowedTools ||
+		!metadataEqual(cur.Metadata, ref.Metadata)
+}
+
+// metadataEqual 归一化 nil / 空 map 再比较，避免前端传 `null` 和 `{}` 的差异误判为变更。
+func metadataEqual(a, b map[string]string) bool {
+	if len(a) == 0 && len(b) == 0 {
+		return true
+	}
+	return reflect.DeepEqual(a, b)
+}
 
 func (rt *Router) aiSkillGets(c *gin.Context) {
 	search := ginx.QueryStr(c, "search", "")
@@ -47,7 +92,14 @@ func (rt *Router) aiSkillAdd(c *gin.Context) {
 	obj.CreatedBy = me.Username
 	obj.UpdatedBy = me.Username
 
-	ginx.Dangerous(obj.Create(rt.Ctx))
+	err := models.DB(rt.Ctx).Transaction(func(tx *gorm.DB) error {
+		tCtx := &ctx.Context{DB: tx, CenterApi: rt.Ctx.CenterApi, Ctx: rt.Ctx.Ctx, IsCenter: rt.Ctx.IsCenter}
+		if err := obj.Create(tCtx); err != nil {
+			return err
+		}
+		return upsertGeneratedSkillMD(tCtx, &obj, me.Username)
+	})
+	ginx.Dangerous(err)
 	ginx.NewRender(c).Data(obj.Id, nil)
 }
 
@@ -66,7 +118,31 @@ func (rt *Router) aiSkillPut(c *gin.Context) {
 	me := c.MustGet("user").(*models.User)
 	ref.UpdatedBy = me.Username
 
-	ginx.NewRender(c).Message(obj.Update(rt.Ctx, ref))
+	// enable toggle 场景：前端 pick 全部字段原样回传，仅 enabled 变。此时保留上传
+	// 路径留下的原始 SKILL.md 字节，不要重新合成覆盖（合成结果会丢失注释、非 schema
+	// 字段、key 顺序等）。只有内容字段真的变了才重生成。
+	contentChanged := skillContentDiffers(obj, &ref)
+
+	err = models.DB(rt.Ctx).Transaction(func(tx *gorm.DB) error {
+		tCtx := &ctx.Context{DB: tx, CenterApi: rt.Ctx.CenterApi, Ctx: rt.Ctx.Ctx, IsCenter: rt.Ctx.IsCenter}
+		if err := obj.Update(tCtx, ref); err != nil {
+			return err
+		}
+		if !contentChanged {
+			return nil
+		}
+		// 用 ref 的内容字段覆盖 obj 得到合并后的视图，再合成 SKILL.md。
+		merged := *obj
+		merged.Name = ref.Name
+		merged.Description = ref.Description
+		merged.Instructions = ref.Instructions
+		merged.License = ref.License
+		merged.Compatibility = ref.Compatibility
+		merged.AllowedTools = ref.AllowedTools
+		merged.Metadata = ref.Metadata
+		return upsertGeneratedSkillMD(tCtx, &merged, me.Username)
+	})
+	ginx.NewRender(c).Message(err)
 }
 
 func (rt *Router) aiSkillDel(c *gin.Context) {
@@ -120,15 +196,17 @@ func extractSkillArchive(c *gin.Context) (meta skill.Frontmatter, instructions s
 	}
 	ginx.Dangerous(err)
 
-	skillMD, files, err := skill.Walk(tmpDir)
+	files, err = skill.Walk(tmpDir)
 	ginx.Dangerous(err)
 
-	if skillMD == "" {
+	skillMD, ok := files["SKILL.md"]
+	if !ok || skillMD == "" {
 		ginx.Bomb(http.StatusBadRequest, "SKILL.md not found in archive root")
 	}
 
-	meta, instructions, ok := skill.ParseMarkdown(skillMD)
-	if !ok {
+	var parseOk bool
+	meta, instructions, parseOk = skill.ParseMarkdown(skillMD)
+	if !parseOk {
 		ginx.Bomb(http.StatusBadRequest, "SKILL.md must contain valid YAML frontmatter with a non-empty 'name' field")
 	}
 
@@ -136,6 +214,9 @@ func extractSkillArchive(c *gin.Context) (meta skill.Frontmatter, instructions s
 	m := models.AISkill{Name: meta.Name, Instructions: instructions}
 	ginx.Dangerous(m.Verify())
 
+	// files 里此时已经天然包含 SKILL.md 这条（Walk 不再剥离）。doSkillImport /
+	// doSkillImportUpdate 通过 AISkillFileBatchUpsert 遍历 files 落库时，SKILL.md
+	// 会作为普通一条记录落进 ai_skill_file 表 —— 原始字节保全。
 	return
 }
 
@@ -298,12 +379,31 @@ func (rt *Router) aiSkillAddByService(c *gin.Context) {
 	exist, err := models.AISkillGetByName(rt.Ctx, obj.Name)
 	ginx.Dangerous(err)
 
-	if exist != nil {
-		ginx.Dangerous(exist.Update(rt.Ctx, obj))
-		ginx.NewRender(c).Data(exist.Id, nil)
-		return
-	}
-
-	ginx.Dangerous(obj.Create(rt.Ctx))
-	ginx.NewRender(c).Data(obj.Id, nil)
+	var resultId int64
+	err = models.DB(rt.Ctx).Transaction(func(tx *gorm.DB) error {
+		tCtx := &ctx.Context{DB: tx, CenterApi: rt.Ctx.CenterApi, Ctx: rt.Ctx.Ctx, IsCenter: rt.Ctx.IsCenter}
+		if exist != nil {
+			if err := exist.Update(tCtx, obj); err != nil {
+				return err
+			}
+			// 合并 exist + obj 得到更新后的视图，再合成 SKILL.md。
+			merged := *exist
+			merged.Name = obj.Name
+			merged.Description = obj.Description
+			merged.Instructions = obj.Instructions
+			merged.License = obj.License
+			merged.Compatibility = obj.Compatibility
+			merged.AllowedTools = obj.AllowedTools
+			merged.Metadata = obj.Metadata
+			resultId = exist.Id
+			return upsertGeneratedSkillMD(tCtx, &merged, "system")
+		}
+		if err := obj.Create(tCtx); err != nil {
+			return err
+		}
+		resultId = obj.Id
+		return upsertGeneratedSkillMD(tCtx, &obj, "system")
+	})
+	ginx.Dangerous(err)
+	ginx.NewRender(c).Data(resultId, nil)
 }

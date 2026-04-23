@@ -13,12 +13,12 @@ import (
 type AISkill struct {
 	Id            int64             `json:"id" gorm:"primaryKey;autoIncrement"`
 	Name          string            `json:"name"`
-	Description   string            `json:"description"`
+	Description   string            `json:"description" gorm:"type:varchar(4096)"`
 	Instructions  string            `json:"instructions" gorm:"type:text"`
-	License       string            `json:"license,omitempty"`
-	Compatibility string            `json:"compatibility,omitempty"`
+	License       string            `json:"license,omitempty" gorm:"type:varchar(255)"`
+	Compatibility string            `json:"compatibility,omitempty" gorm:"type:varchar(255)"`
 	Metadata      map[string]string `json:"metadata,omitempty" gorm:"serializer:json"`
-	AllowedTools  string            `json:"allowed_tools,omitempty"`
+	AllowedTools  string            `json:"allowed_tools,omitempty" gorm:"type:varchar(4096)"`
 	Enabled       bool              `json:"enabled"`
 	CreatedAt     int64             `json:"created_at"`
 	CreatedBy     string            `json:"created_by"`
