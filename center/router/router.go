@@ -821,6 +821,8 @@ func (rt *Router) Config(r *gin.Engine) {
 
 			service.GET("/ai-llm-configs", rt.aiLLMConfigGets)
 			service.GET("/ai-llm-config/:id", rt.aiLLMConfigGet)
+			service.POST("/ai-llm-configs", rt.aiLLMConfigAddByService)
+			service.PUT("/ai-llm-config/:id", rt.aiLLMConfigPutByService)
 
 			// AI Assistant (for external service, reuses frontend handlers via serviceUser middleware)
 			service.POST("/assistant/chat/new", rt.serviceUser(), rt.assistantChatNew)

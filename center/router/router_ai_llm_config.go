@@ -73,6 +73,33 @@ func (rt *Router) aiLLMConfigPut(c *gin.Context) {
 	ginx.NewRender(c).Message(obj.Update(rt.Ctx, me.Username, ref))
 }
 
+func (rt *Router) aiLLMConfigAddByService(c *gin.Context) {
+	var obj models.AILLMConfig
+	ginx.BindJSON(c, &obj)
+	ginx.Dangerous(obj.Verify())
+
+	ginx.Dangerous(obj.Create(rt.Ctx, "system"))
+	ginx.NewRender(c).Data(obj.Id, nil)
+}
+
+func (rt *Router) aiLLMConfigPutByService(c *gin.Context) {
+	id := ginx.UrlParamInt64(c, "id")
+	obj, err := models.AILLMConfigGetById(rt.Ctx, id)
+	ginx.Dangerous(err)
+	if obj == nil {
+		ginx.Bomb(http.StatusNotFound, "ai llm config not found")
+	}
+
+	var ref models.AILLMConfig
+	ginx.BindJSON(c, &ref)
+	if ref.APIKey == "" || models.IsMaskedAPIKey(ref.APIKey, obj.APIKey) {
+		ref.APIKey = obj.APIKey
+	}
+	ginx.Dangerous(ref.Verify())
+
+	ginx.NewRender(c).Message(obj.Update(rt.Ctx, "system", ref))
+}
+
 func (rt *Router) aiLLMConfigDel(c *gin.Context) {
 	id := ginx.UrlParamInt64(c, "id")
 	obj, err := models.AILLMConfigGetById(rt.Ctx, id)
