@@ -2,6 +2,7 @@ package doris
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -105,7 +106,41 @@ func (d *Doris) MakeTSQuery(ctx context.Context, query interface{}, eventTags []
 }
 
 func (d *Doris) QueryMapData(ctx context.Context, query interface{}) ([]map[string]string, error) {
-	return nil, nil
+	items, _, err := d.QueryLog(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	logs := make([]map[string]string, 0, len(items))
+	for _, item := range items {
+		row, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		m := make(map[string]string, len(row))
+		for k, v := range row {
+			if v == nil {
+				continue
+			}
+			switch val := v.(type) {
+			case string:
+				m[k] = val
+			case []byte:
+				m[k] = string(val)
+			default:
+				b, err := json.Marshal(v)
+				if err != nil {
+					m[k] = fmt.Sprintf("%v", v)
+				} else {
+					m[k] = string(b)
+				}
+			}
+		}
+		if len(m) > 0 {
+			logs = append(logs, m)
+		}
+	}
+	return logs, nil
 }
 
 func (d *Doris) QueryData(ctx context.Context, query interface{}) ([]models.DataResp, error) {
